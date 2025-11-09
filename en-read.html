@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>在线英文朗读工具</title>
+<style>
+body { font-family: Arial; padding: 10px; line-height: 1.6; }
+.paragraph { margin-bottom: 15px; word-wrap: break-word; }
+.word { cursor: pointer; padding: 4px 5px; display: inline-block; transition: background 0.2s; position: relative; font-size: 1em; }
+.highlight { background-color: yellow; }
+#controls { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+textarea { width: 100%; height: 120px; margin-bottom: 10px; font-size: 1em; }
+button, select, input { padding: 6px 10px; font-size: 1em; }
+.tooltip {
+    visibility: hidden;
+    background-color: #333;
+    color: #fff;
+    text-align: center;
+    padding: 3px 6px;
+    border-radius: 4px;
+    position: absolute;
+    z-index: 1;
+    bottom: 125%;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    white-space: nowrap;
+}
+.word:hover .tooltip, .word:active .tooltip { visibility: visible; }
+#text-container { max-height: 60vh; overflow-y: auto; border: 1px solid #ccc; padding: 5px; }
+</style>
+</head>
+<body>
+
+<h2>在线英文朗读工具</h2>
+
+<textarea id="article">Hello world! This is a test sentence. Let's see how it works on mobile and desktop.</textarea>
+
+<div id="controls">
+  <button onclick="playText()">播放整段</button>
+  <button onclick="pauseText()">暂停</button>
+  <button onclick="resumeText()">继续</button>
+  <label>语速: <input type="number" id="rate" value="1" step="0.1" min="0.5" max="2"></label>
+  <label>发音:
+    <select id="voiceSelect"></select>
+  </label>
+</div>
+
+<div id="text-container"></div>
+
+<script>
+let voices = [];
+let translationCache = {};
+let paragraphs = [];
+let charIndexesPerParagraph = [];
+let currentUtterance = null;
+
+// 加载语音
+function loadVoices(){
+    voices = window.speechSynthesis.getVoices();
+    const select = document.getElementById('voiceSelect');
+    select.innerHTML = '';
+    voices.forEach((v,i)=>{
+        const option = document.createElement('option');
+        option.value = i;
+        option.text = `${v.name} (${v.lang})`;
+        select.appendChild(option);
+    });
+}
+window.speechSynthesis.onvoiceschanged = loadVoices;
+loadVoices();
+
+// 获取单词翻译
+async function getTranslation(word){
+    word = word.toLowerCase();
+    if(translationCache[word]) return translationCache[word];
+    try{
+        const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+        const data = await res.json();
+        if(data[0] && data[0].meanings && data[0].meanings[0] && data[0].meanings[0].definitions){
+            const definition = data[0].meanings[0].definitions[0].definition;
+            translationCache[word] = definition;
+            return definition;
+        }
+    } catch(e){ console.error(word,e); }
+    translationCache[word] = "翻译未找到";
+    return "翻译未找到";
+}
+
+// 拆分段落 + 单词 + 翻译
+async function splitParagraphs(){
+    const text = document.getElementById('article').value.trim();
+    const rawParagraphs = text.split(/(?<=[.!?])/).filter(p=>p.trim()!=="");
+    paragraphs = [];
+    charIndexesPerParagraph = [];
+    const container = document.getElementById('text-container');
+    container.innerHTML = '';
+
+    for(let paraText of rawParagraphs){
+        paragraphs.push(paraText);
+        const pElem = document.createElement('p');
+        pElem.className = 'paragraph';
+
+        let charIdxList = [];
+        let idx = 0;
+        const words = paraText.split(/\s+/);
+        for(let j=0;j<words.length;j++){
+            const w = words[j];
+            charIdxList.push(idx);
+            idx += w.length + 1;
+
+            const span = document.createElement('span');
+            span.className = 'word';
+            span.dataset.wordIndex = j;
+            span.onclick = span.ontouchstart = ()=> speakWord(w);
+
+            const tooltip = document.createElement('span');
+            tooltip.className = 'tooltip';
+            tooltip.textContent = await getTranslation(w);
+
+            span.textContent = w + " ";
+            span.appendChild(tooltip);
+            pElem.appendChild(span);
+        }
+        charIndexesPerParagraph.push(charIdxList);
+        container.appendChild(pElem);
+    }
+}
+
+// 高亮单词
+function highlightWordByCharIndex(charIndex, paragraphIndex){
+    const pElem = document.querySelectorAll('.paragraph')[paragraphIndex];
+    const charIndexes = charIndexesPerParagraph[paragraphIndex];
+    let i = charIndexes.findIndex((start,idx)=>{
+        const end = charIndexes[idx+1] || Infinity;
+        return charIndex >= start && charIndex < end;
+    });
+    if(i>=0){
+        pElem.querySelectorAll('.word').forEach(span=>span.classList.remove('highlight'));
+        const span = pElem.querySelector(`span[data-word-index='${i}']`);
+        if(span){
+            span.classList.add('highlight');
+            span.scrollIntoView({behavior:'smooth', block:'center'});
+        }
+    }
+}
+
+// 播放整段
+async function playText(){
+    await splitParagraphs();
+    const rate = parseFloat(document.getElementById('rate').value);
+    const voiceIndex = parseInt(document.getElementById('voiceSelect').value) || 0;
+    let paraIndex = 0;
+
+    function speakNextParagraph(){
+        if(paraIndex >= paragraphs.length) return;
+        const text = paragraphs[paraIndex];
+        currentUtterance = new SpeechSynthesisUtterance(text);
+        currentUtterance.rate = rate;
+        currentUtterance.voice = voices[voiceIndex] || null;
+
+        currentUtterance.onboundary = (event)=>{
+            highlightWordByCharIndex(event.charIndex, paraIndex);
+        }
+        currentUtterance.onend = ()=>{
+            paraIndex++;
+            speakNextParagraph();
+        }
+
+        window.speechSynthesis.speak(currentUtterance);
+    }
+
+    window.speechSynthesis.cancel();
+    speakNextParagraph();
+}
+
+// 暂停
+function pauseText(){ window.speechSynthesis.pause(); }
+
+// 继续
+function resumeText(){ window.speechSynthesis.resume(); }
+
+// 单词点击朗读
+function speakWord(word){
+    const msg = new SpeechSynthesisUtterance(word);
+    const voiceIndex = parseInt(document.getElementById('voiceSelect').value) || 0;
+    msg.voice = voices[voiceIndex] || null;
+    msg.rate = parseFloat(document.getElementById('rate').value);
+    window.speechSynthesis.speak(msg);
+}
+</script>
+
+</body>
+</html>
