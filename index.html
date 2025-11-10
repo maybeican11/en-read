@@ -11,7 +11,7 @@ body { font-family: Arial; padding: 10px; line-height: 1.6; }
 .highlight { background-color: yellow; }
 #controls { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 textarea { width: 100%; height: 120px; margin-bottom: 10px; font-size: 1em; }
-button, select, input { padding: 6px 10px; font-size: 1em; }
+button, input { padding: 6px 10px; font-size: 1em; }
 .tooltip {
     visibility: hidden;
     background-color: #333;
@@ -42,36 +42,17 @@ button, select, input { padding: 6px 10px; font-size: 1em; }
   <button onclick="pauseText()">暂停</button>
   <button onclick="resumeText()">继续</button>
   <label>语速: <input type="number" id="rate" value="1" step="0.1" min="0.5" max="2"></label>
-  <label>发音:
-    <select id="voiceSelect"></select>
-  </label>
 </div>
 
 <div id="text-container"></div>
 
 <script>
-let voices = [];
-let translationCache = {};
 let paragraphs = [];
 let charIndexesPerParagraph = [];
 let currentUtterance = null;
 
-// 加载语音
-function loadVoices(){
-    voices = window.speechSynthesis.getVoices();
-    const select = document.getElementById('voiceSelect');
-    select.innerHTML = '';
-    voices.forEach((v,i)=>{
-        const option = document.createElement('option');
-        option.value = i;
-        option.text = `${v.name} (${v.lang})`;
-        select.appendChild(option);
-    });
-}
-window.speechSynthesis.onvoiceschanged = loadVoices;
-loadVoices();
-
 // 获取单词翻译
+let translationCache = {};
 async function getTranslation(word){
     word = word.toLowerCase();
     if(translationCache[word]) return translationCache[word];
@@ -150,15 +131,16 @@ function highlightWordByCharIndex(charIndex, paragraphIndex){
 async function playText(){
     await splitParagraphs();
     const rate = parseFloat(document.getElementById('rate').value);
-    const voiceIndex = parseInt(document.getElementById('voiceSelect').value) || 0;
     let paraIndex = 0;
+    const voices = window.speechSynthesis.getVoices();
+    const voice = voices.length > 0 ? voices[0] : null;
 
     function speakNextParagraph(){
         if(paraIndex >= paragraphs.length) return;
         const text = paragraphs[paraIndex];
         currentUtterance = new SpeechSynthesisUtterance(text);
         currentUtterance.rate = rate;
-        currentUtterance.voice = voices[voiceIndex] || null;
+        currentUtterance.voice = voice;
 
         currentUtterance.onboundary = (event)=>{
             highlightWordByCharIndex(event.charIndex, paraIndex);
@@ -184,9 +166,9 @@ function resumeText(){ window.speechSynthesis.resume(); }
 // 单词点击朗读
 function speakWord(word){
     const msg = new SpeechSynthesisUtterance(word);
-    const voiceIndex = parseInt(document.getElementById('voiceSelect').value) || 0;
-    msg.voice = voices[voiceIndex] || null;
     msg.rate = parseFloat(document.getElementById('rate').value);
+    const voices = window.speechSynthesis.getVoices();
+    msg.voice = voices.length > 0 ? voices[0] : null;
     window.speechSynthesis.speak(msg);
 }
 </script>
